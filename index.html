@@ -234,6 +234,11 @@
       <div class="stat-value" id="lines-value">0</div>
     </div>
     <div class="card">
+      <h2>Save Block</h2>
+      <button class="btn" id="save-block-btn" style="width:100%;" disabled>Save Block</button>
+      <div id="saved-block-info" style="margin-top:8px; font-size:12px; color:var(--text-dim);">No block saved</div>
+    </div>
+    <div class="card">
       <h2>Controls</h2>
       <div class="controls-list">
         <div><b>&larr; &rarr;</b> Move</div>
@@ -341,6 +346,8 @@
 
   const startBtn = document.getElementById("start-btn");
   const restartBtn = document.getElementById("restart-btn");
+  const saveBlockBtn = document.getElementById("save-block-btn");
+  const savedBlockInfo = document.getElementById("saved-block-info");
 
   // ---------- Game state ----------
   let grid;            // 2D array [row][col] -> color string or null
@@ -364,6 +371,24 @@
   let paused = false;
   let gameOver = false;
   let rafId = null;
+
+  // Smooth held-movement (DAS = delay before auto-repeat, ARR = repeat interval)
+  const DAS_DELAY = 170; // ms held before auto-repeat kicks in
+  const ARR_INTERVAL = 50; // ms between repeated moves once auto-repeat is active
+  let leftHeld = false;
+  let rightHeld = false;
+  let horizontalDir = 0; // -1, 0, or 1 - the direction currently auto-repeating
+  let dasCharged = false;
+  let dasTimer = 0;
+  let arrTimer = 0;
+
+  // Saved blocks - persisted alongside the existing localStorage save pattern
+  let savedBlocks = [];
+  try {
+    savedBlocks = JSON.parse(localStorage.getItem("tetrisSavedBlocks") || "[]");
+  } catch (e) {
+    savedBlocks = [];
+  }
 
   // ---------- 7-bag randomizer ----------
   function refillBag() {
@@ -647,6 +672,26 @@
     lastTime = timestamp;
 
     if (!paused && !gameOver) {
+      if (horizontalDir !== 0) {
+        if (!dasCharged) {
+          dasTimer += delta;
+          if (dasTimer >= DAS_DELAY) {
+            dasCharged = true;
+            arrTimer = 0;
+            tryMove(horizontalDir, 0);
+          }
+        } else {
+          arrTimer += delta;
+          while (arrTimer >= ARR_INTERVAL) {
+            arrTimer -= ARR_INTERVAL;
+            if (!tryMove(horizontalDir, 0)) {
+              arrTimer = 0;
+              break;
+            }
+          }
+        }
+      }
+
       dropTimer += delta;
       if (dropTimer >= dropInterval) {
         dropTimer = 0;
@@ -674,6 +719,7 @@
     nextType = null;
     nextType = nextFromBag();
     updateStats();
+    resetHorizontalHold();
 
     current = spawnPiece();
 
@@ -690,6 +736,8 @@
   function endGame() {
     gameOver = true;
     running = false;
+    resetHorizontalHold();
+    saveBlockBtn.disabled = true;
     if (rafId) cancelAnimationFrame(rafId);
 
     let isNewHigh = false;
@@ -719,17 +767,40 @@
   }
 
   // ---------- Input ----------
+  function resetHorizontalHold() {
+    leftHeld = false;
+    rightHeld = false;
+    horizontalDir = 0;
+    dasCharged = false;
+    dasTimer = 0;
+    arrTimer = 0;
+  }
+
   document.addEventListener("keydown", function (e) {
     if (!running) return;
 
     switch (e.code) {
       case "ArrowLeft":
         e.preventDefault();
-        if (!paused && !gameOver) tryMove(-1, 0);
+        if (!leftHeld) {
+          leftHeld = true;
+          horizontalDir = -1;
+          dasCharged = false;
+          dasTimer = 0;
+          arrTimer = 0;
+          if (!paused && !gameOver) tryMove(-1, 0);
+        }
         break;
       case "ArrowRight":
         e.preventDefault();
-        if (!paused && !gameOver) tryMove(1, 0);
+        if (!rightHeld) {
+          rightHeld = true;
+          horizontalDir = 1;
+          dasCharged = false;
+          dasTimer = 0;
+          arrTimer = 0;
+          if (!paused && !gameOver) tryMove(1, 0);
+        }
         break;
       case "ArrowDown":
         e.preventDefault();
@@ -751,8 +822,86 @@
     }
   });
 
-  startBtn.addEventListener("click", startGame);
-  restartBtn.addEventListener("click", startGame);
+  document.addEventListener("keyup", function (e) {
+    switch (e.code) {
+      case "ArrowLeft":
+        leftHeld = false;
+        if (horizontalDir === -1) {
+          if (rightHeld) {
+            horizontalDir = 1;
+            dasCharged = false;
+            dasTimer = 0;
+            arrTimer = 0;
+          } else {
+            horizontalDir = 0;
+          }
+        }
+        break;
+      case "ArrowRight":
+        rightHeld = false;
+        if (horizontalDir === 1) {
+          if (leftHeld) {
+            horizontalDir = -1;
+            dasCharged = false;
+            dasTimer = 0;
+            arrTimer = 0;
+          } else {
+            horizontalDir = 0;
+          }
+        }
+        break;
+    }
+  });
+
+  // Release held movement if the window loses focus (e.g. alt-tab) so the
+  // piece doesn't keep auto-repeating with no way to stop it.
+  window.addEventListener("blur", resetHorizontalHold);
+
+  // ---------- Save Block ----------
+  function refreshSavedBlockInfo() {
+    if (savedBlocks.length === 0) {
+      savedBlockInfo.textContent = "No block saved";
+    } else {
+      const last = savedBlocks[savedBlocks.length - 1];
+      savedBlockInfo.textContent = "Saved: " + last.type + " @ (" + last.x + ", " + last.y + ")";
+    }
+  }
+
+  function saveCurrentBlock() {
+    if (!current || !running || gameOver) return;
+
+    const snapshot = {
+      type: current.type,
+      rot: current.rot,
+      x: current.x,
+      y: current.y,
+      savedAt: Date.now()
+    };
+    savedBlocks.push(snapshot);
+    try {
+      localStorage.setItem("tetrisSavedBlocks", JSON.stringify(savedBlocks));
+    } catch (e) { /* ignore storage errors */ }
+
+    refreshSavedBlockInfo();
+
+    const originalText = saveBlockBtn.textContent;
+    saveBlockBtn.textContent = "Saved!";
+    setTimeout(function () {
+      saveBlockBtn.textContent = originalText;
+    }, 800);
+  }
+
+  saveBlockBtn.addEventListener("click", saveCurrentBlock);
+  refreshSavedBlockInfo();
+
+  startBtn.addEventListener("click", function () {
+    startGame();
+    saveBlockBtn.disabled = false;
+  });
+  restartBtn.addEventListener("click", function () {
+    startGame();
+    saveBlockBtn.disabled = false;
+  });
 
   // ---------- Initial render (empty board behind start screen) ----------
   grid = createGrid();
