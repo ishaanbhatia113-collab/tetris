@@ -253,9 +253,9 @@
     <div class="card">
       <h2>Controls</h2>
       <div class="controls-list">
-        <div><b>&larr; &rarr;</b> Move</div>
-        <div><b>&darr;</b> Soft drop</div>
-        <div><b>&uarr; / Z</b> Rotate</div>
+        <div><b>&larr; &rarr; / A D</b> Move</div>
+        <div><b>&darr; / S</b> Soft drop</div>
+        <div><b>&uarr; / W / Z</b> Rotate</div>
         <div><b>Space</b> Hard drop</div>
         <div><b>C</b> Hold (1/piece)</div>
         <div><b>P</b> Pause</div>
@@ -861,6 +861,7 @@
 
     switch (e.code) {
       case "ArrowLeft":
+      case "KeyA":
         e.preventDefault();
         if (!leftHeld) {
           leftHeld = true;
@@ -872,6 +873,7 @@
         }
         break;
       case "ArrowRight":
+      case "KeyD":
         e.preventDefault();
         if (!rightHeld) {
           rightHeld = true;
@@ -883,10 +885,12 @@
         }
         break;
       case "ArrowDown":
+      case "KeyS":
         e.preventDefault();
         if (!paused && !gameOver) softDrop();
         break;
       case "ArrowUp":
+      case "KeyW":
       case "KeyZ":
         e.preventDefault();
         if (!paused && !gameOver) tryRotate();
@@ -909,6 +913,7 @@
   document.addEventListener("keyup", function (e) {
     switch (e.code) {
       case "ArrowLeft":
+      case "KeyA":
         leftHeld = false;
         if (horizontalDir === -1) {
           if (rightHeld) {
@@ -922,6 +927,7 @@
         }
         break;
       case "ArrowRight":
+      case "KeyD":
         rightHeld = false;
         if (horizontalDir === 1) {
           if (leftHeld) {
