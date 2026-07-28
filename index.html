@@ -88,11 +88,23 @@
     font-variant-numeric: tabular-nums;
   }
 
-  #next-canvas {
+  #next-canvas, #hold-canvas {
     display: block;
     margin: 0 auto;
     background: var(--board-bg);
     border-radius: 4px;
+  }
+
+  button.btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+  }
+
+  button.btn.hold-used {
+    background: linear-gradient(135deg, #3a3f5c, #2b3150);
+    box-shadow: none;
   }
 
   .title {
@@ -234,9 +246,9 @@
       <div class="stat-value" id="lines-value">0</div>
     </div>
     <div class="card">
-      <h2>Save Block</h2>
-      <button class="btn" id="save-block-btn" style="width:100%;" disabled>Save Block</button>
-      <div id="saved-block-info" style="margin-top:8px; font-size:12px; color:var(--text-dim);">No block saved</div>
+      <h2>Hold</h2>
+      <canvas id="hold-canvas" width="120" height="120"></canvas>
+      <button class="btn" id="hold-btn" style="width:100%; margin-top:10px;" disabled>Hold</button>
     </div>
     <div class="card">
       <h2>Controls</h2>
@@ -245,6 +257,7 @@
         <div><b>&darr;</b> Soft drop</div>
         <div><b>&uarr; / Z</b> Rotate</div>
         <div><b>Space</b> Hard drop</div>
+        <div><b>Hold</b> Swap piece (1/piece)</div>
         <div><b>P</b> Pause</div>
       </div>
     </div>
@@ -334,6 +347,9 @@
   const nextCanvas = document.getElementById("next-canvas");
   const nextCtx = nextCanvas.getContext("2d");
 
+  const holdCanvas = document.getElementById("hold-canvas");
+  const holdCtx = holdCanvas.getContext("2d");
+
   const scoreEl = document.getElementById("score-value");
   const levelEl = document.getElementById("level-value");
   const linesEl = document.getElementById("lines-value");
@@ -346,8 +362,7 @@
 
   const startBtn = document.getElementById("start-btn");
   const restartBtn = document.getElementById("restart-btn");
-  const saveBlockBtn = document.getElementById("save-block-btn");
-  const savedBlockInfo = document.getElementById("saved-block-info");
+  const holdBtn = document.getElementById("hold-btn");
 
   // ---------- Game state ----------
   let grid;            // 2D array [row][col] -> color string or null
@@ -382,13 +397,10 @@
   let dasTimer = 0;
   let arrTimer = 0;
 
-  // Saved blocks - persisted alongside the existing localStorage save pattern
-  let savedBlocks = [];
-  try {
-    savedBlocks = JSON.parse(localStorage.getItem("tetrisSavedBlocks") || "[]");
-  } catch (e) {
-    savedBlocks = [];
-  }
+  // Hold piece - classic Tetris hold: swap the active piece into a single
+  // hold slot, usable at most once per piece (resets when a piece locks).
+  let holdType = null;
+  let canHold = true;
 
   // ---------- 7-bag randomizer ----------
   function refillBag() {
@@ -430,16 +442,8 @@
     return true;
   }
 
-  function spawnPiece() {
-    const type = nextType !== null ? nextType : nextFromBag();
-    nextType = nextFromBag();
-    drawNextPreview();
-
+  function placeNewPiece(type) {
     const piece = { type: type, rot: 0, x: 3, y: -1 };
-    // Adjust spawn x for I and O to match standard spawn columns roughly.
-    if (type === "I") piece.x = 3;
-    if (type === "O") piece.x = 3;
-
     if (!isValidPosition(piece, piece.rot, 0, 0)) {
       // Try nudging up for pieces that spawn overlapping
       piece.y = -2;
@@ -449,6 +453,13 @@
       }
     }
     return piece;
+  }
+
+  function spawnPiece() {
+    const type = nextType !== null ? nextType : nextFromBag();
+    nextType = nextFromBag();
+    drawNextPreview();
+    return placeNewPiece(type);
   }
 
   function lockPiece() {
@@ -462,7 +473,37 @@
       grid[cy][cx] = COLORS[current.type];
     }
     clearLines();
+    canHold = true;
+    updateHoldUI();
     current = spawnPiece();
+  }
+
+  // ---------- Hold ----------
+  function holdCurrentPiece() {
+    if (!current || !running || paused || gameOver) return;
+    if (!canHold) return; // hold already used for this piece
+
+    const currentType = current.type;
+
+    if (holdType === null) {
+      holdType = currentType;
+      current = spawnPiece();
+    } else {
+      const swapType = holdType;
+      holdType = currentType;
+      const swapped = placeNewPiece(swapType);
+      if (!swapped) return; // endGame() already ran inside placeNewPiece
+      current = swapped;
+    }
+
+    canHold = false;
+    updateHoldUI();
+  }
+
+  function updateHoldUI() {
+    holdBtn.disabled = !running || gameOver || !canHold;
+    holdBtn.classList.toggle("hold-used", !canHold && running && !gameOver);
+    drawHoldPreview();
   }
 
   function clearLines() {
@@ -664,6 +705,41 @@
     }
   }
 
+  function drawHoldPreview() {
+    holdCtx.clearRect(0, 0, holdCanvas.width, holdCanvas.height);
+    holdCtx.fillStyle = "#10121d";
+    holdCtx.fillRect(0, 0, holdCanvas.width, holdCanvas.height);
+    if (holdType === null) return;
+
+    const shape = SHAPES[holdType][0];
+    const xs = shape.map(c => c[0]);
+    const ys = shape.map(c => c[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const pieceW = (maxX - minX + 1) * NEXT_CELL;
+    const pieceH = (maxY - minY + 1) * NEXT_CELL;
+    const offX = Math.floor((holdCanvas.width - pieceW) / 2) - minX * NEXT_CELL;
+    const offY = Math.floor((holdCanvas.height - pieceH) / 2) - minY * NEXT_CELL;
+
+    holdCtx.save();
+    holdCtx.globalAlpha = canHold ? 1 : 0.35; // dim while hold is locked out for this piece
+    for (const [cx, cy] of shape) {
+      const px = offX + cx * NEXT_CELL;
+      const py = offY + cy * NEXT_CELL;
+      holdCtx.fillStyle = COLORS[holdType];
+      holdCtx.fillRect(px, py, NEXT_CELL, NEXT_CELL);
+      holdCtx.fillStyle = "rgba(255,255,255,0.18)";
+      holdCtx.fillRect(px, py, NEXT_CELL, 3);
+      holdCtx.fillRect(px, py, 3, NEXT_CELL);
+      holdCtx.fillStyle = "rgba(0,0,0,0.25)";
+      holdCtx.fillRect(px, py + NEXT_CELL - 3, NEXT_CELL, 3);
+      holdCtx.fillRect(px + NEXT_CELL - 3, py, 3, NEXT_CELL);
+      holdCtx.strokeStyle = "rgba(0,0,0,0.35)";
+      holdCtx.strokeRect(px + 0.5, py + 0.5, NEXT_CELL - 1, NEXT_CELL - 1);
+    }
+    holdCtx.restore();
+  }
+
   // ---------- Game loop ----------
   function loop(timestamp) {
     if (!running) return;
@@ -720,6 +796,8 @@
     nextType = nextFromBag();
     updateStats();
     resetHorizontalHold();
+    holdType = null;
+    canHold = true;
 
     current = spawnPiece();
 
@@ -731,13 +809,15 @@
     lastTime = 0;
     if (rafId) cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(loop);
+
+    updateHoldUI();
   }
 
   function endGame() {
     gameOver = true;
     running = false;
     resetHorizontalHold();
-    saveBlockBtn.disabled = true;
+    updateHoldUI();
     if (rafId) cancelAnimationFrame(rafId);
 
     let isNewHigh = false;
@@ -857,56 +937,16 @@
   // piece doesn't keep auto-repeating with no way to stop it.
   window.addEventListener("blur", resetHorizontalHold);
 
-  // ---------- Save Block ----------
-  function refreshSavedBlockInfo() {
-    if (savedBlocks.length === 0) {
-      savedBlockInfo.textContent = "No block saved";
-    } else {
-      const last = savedBlocks[savedBlocks.length - 1];
-      savedBlockInfo.textContent = "Saved: " + last.type + " @ (" + last.x + ", " + last.y + ")";
-    }
-  }
+  holdBtn.addEventListener("click", holdCurrentPiece);
 
-  function saveCurrentBlock() {
-    if (!current || !running || gameOver) return;
-
-    const snapshot = {
-      type: current.type,
-      rot: current.rot,
-      x: current.x,
-      y: current.y,
-      savedAt: Date.now()
-    };
-    savedBlocks.push(snapshot);
-    try {
-      localStorage.setItem("tetrisSavedBlocks", JSON.stringify(savedBlocks));
-    } catch (e) { /* ignore storage errors */ }
-
-    refreshSavedBlockInfo();
-
-    const originalText = saveBlockBtn.textContent;
-    saveBlockBtn.textContent = "Saved!";
-    setTimeout(function () {
-      saveBlockBtn.textContent = originalText;
-    }, 800);
-  }
-
-  saveBlockBtn.addEventListener("click", saveCurrentBlock);
-  refreshSavedBlockInfo();
-
-  startBtn.addEventListener("click", function () {
-    startGame();
-    saveBlockBtn.disabled = false;
-  });
-  restartBtn.addEventListener("click", function () {
-    startGame();
-    saveBlockBtn.disabled = false;
-  });
+  startBtn.addEventListener("click", startGame);
+  restartBtn.addEventListener("click", startGame);
 
   // ---------- Initial render (empty board behind start screen) ----------
   grid = createGrid();
   render();
   drawNextPreview();
+  drawHoldPreview();
 })();
 </script>
 </body>
