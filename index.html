@@ -248,7 +248,7 @@
     <div class="card">
       <h2>Hold</h2>
       <canvas id="hold-canvas" width="120" height="120"></canvas>
-      <button class="btn" id="hold-btn" style="width:100%; margin-top:10px;" disabled>Hold</button>
+      <button class="btn" id="hold-btn" style="width:100%; margin-top:10px;" disabled>Hold (C)</button>
     </div>
     <div class="card">
       <h2>Controls</h2>
@@ -257,7 +257,7 @@
         <div><b>&darr;</b> Soft drop</div>
         <div><b>&uarr; / Z</b> Rotate</div>
         <div><b>Space</b> Hard drop</div>
-        <div><b>Hold</b> Swap piece (1/piece)</div>
+        <div><b>C</b> Hold (1/piece)</div>
         <div><b>P</b> Pause</div>
       </div>
     </div>
@@ -894,6 +894,10 @@
       case "Space":
         e.preventDefault();
         if (!paused && !gameOver) hardDrop();
+        break;
+      case "KeyC":
+        e.preventDefault();
+        if (!paused && !gameOver) holdCurrentPiece();
         break;
       case "KeyP":
         e.preventDefault();
